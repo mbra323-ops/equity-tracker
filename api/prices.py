@@ -11,10 +11,12 @@ HEADERS = {
     'Accept': '*/*',
 }
 
+VALID_RANGES = {'1mo', '3mo', '6mo', '1y'}
 
-def fetch_symbol(symbol):
+
+def fetch_symbol(symbol, range_param='1mo'):
     encoded = urllib.parse.quote(symbol)
-    url = f'https://query2.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1mo'
+    url = f'https://query2.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range={range_param}'
     req = urllib.request.Request(url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -31,9 +33,18 @@ def fetch_symbol(symbol):
 
         r = results[0]
         meta = r.get('meta', {})
+        timestamps = r.get('timestamp') or []
         quotes = r.get('indicators', {}).get('quote', [{}])
         raw_closes = quotes[0].get('close', []) if quotes else []
-        closes = [c for c in raw_closes if c is not None]
+
+        # Build full history array (timestamp + close, skip nulls)
+        history = []
+        for i, ts in enumerate(timestamps):
+            c = raw_closes[i] if i < len(raw_closes) else None
+            if c is not None:
+                history.append({'t': ts, 'c': round(c, 6)})
+
+        closes = [h['c'] for h in history]
 
         price = meta.get('regularMarketPrice')
         prev_close = meta.get('previousClose') or (closes[-2] if len(closes) >= 2 else None)
@@ -46,8 +57,6 @@ def fetch_symbol(symbol):
 
         month_ago = closes[0] if closes else None
         month_pct = round((price - month_ago) / month_ago * 100, 2) if price and month_ago else None
-
-        sparkline = [round(c, 4) for c in closes[-20:]]
 
         return symbol, {
             'price': price,
@@ -64,7 +73,8 @@ def fetch_symbol(symbol):
             'marketState': meta.get('marketState', 'CLOSED'),
             'fiftyTwoWeekHigh': meta.get('fiftyTwoWeekHigh'),
             'fiftyTwoWeekLow': meta.get('fiftyTwoWeekLow'),
-            'sparkline': sparkline,
+            'sparkline': closes[-20:],
+            'history': history,
             'timestamp': meta.get('regularMarketTime'),
         }
     except urllib.error.HTTPError as e:
@@ -84,6 +94,10 @@ def prices(path=None):
         return resp
 
     raw = request.args.get('symbols', '')
+    range_param = request.args.get('range', '1mo')
+    if range_param not in VALID_RANGES:
+        range_param = '1mo'
+
     symbols = [s.strip().upper() for s in raw.split(',') if s.strip()][:30]
 
     if not symbols:
@@ -93,7 +107,7 @@ def prices(path=None):
 
     result = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(fetch_symbol, s): s for s in symbols}
+        futures = {ex.submit(fetch_symbol, s, range_param): s for s in symbols}
         for f in as_completed(futures):
             sym, data = f.result()
             result[sym] = data

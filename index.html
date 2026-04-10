@@ -250,6 +250,27 @@
       <input class="search-box" id="market-search" type="text" placeholder="Filter watchlist…" oninput="renderMarkets()">
       <button class="btn btn-primary" onclick="openAddWatchlistModal()">+ Add Symbol</button>
     </div>
+    <!-- ── Performance Chart ── -->
+    <div class="card" id="perf-card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:14px;font-weight:600">Performance</span>
+          <span style="font-size:11px;color:var(--muted)">normalised · 100 = start of period</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <div id="range-btns" style="display:flex;gap:3px"></div>
+          <button class="btn-icon" id="perf-collapse-btn" onclick="togglePerfChart()" style="font-size:11px;margin-left:4px">▲</button>
+        </div>
+      </div>
+      <div id="perf-body" style="margin-top:14px">
+        <div id="series-toggles" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"></div>
+        <div style="position:relative;height:300px">
+          <canvas id="perf-chart-canvas"></canvas>
+          <div id="perf-loading" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:var(--muted);font-size:13px;background:var(--bg-card);border-radius:8px">Loading chart data…</div>
+        </div>
+      </div>
+    </div>
+
     <div class="error-banner" id="market-error"></div>
     <div class="card">
       <div class="table-wrap">
@@ -472,6 +493,8 @@ let state = {
   refreshTimer: null,
   countdownTimer: null,
   isLoading: false,
+  chartRange: '3mo',
+  chartCollapsed: false,
 };
 
 function loadState() {
@@ -1078,6 +1101,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab)?.classList.add('active');
   renderAll();
+  if (tab === 'markets') initPerfChart();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1302,6 +1326,299 @@ function onBaseCurrencyChange(ccy) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// PERFORMANCE CHART
+// ══════════════════════════════════════════════════════════════
+
+const PORTFOLIO_KEY = '__PORTFOLIO__';
+const PORTFOLIO_COLOR = '#f59e0b';
+const BENCH_COLORS = { '^AXJO': '#6366f1', '^GSPC': '#3b82f6' };
+
+let perfChart = null;
+let historyLoading = false;
+let historyCache = {};    // keyed by `${range}::${sym}`
+let enabledSeries = null; // Set — null until first init
+
+function cacheKey(range, sym) { return `${range}::${sym}`; }
+
+function initEnabledSeries() {
+  if (enabledSeries) return;
+  enabledSeries = new Set();
+  if (state.holdings.length > 0) enabledSeries.add(PORTFOLIO_KEY);
+  BENCHMARK_SYMBOLS.forEach(s => enabledSeries.add(s));
+  state.watchlist.filter(s => !BENCHMARK_SYMBOLS.includes(s)).slice(0, 3).forEach(s => enabledSeries.add(s));
+}
+
+async function fetchHistory() {
+  if (historyLoading) return;
+  const range = state.chartRange;
+
+  const needed = [...new Set([
+    ...state.watchlist,
+    ...state.holdings.map(h => h.symbol),
+    ...BENCHMARK_SYMBOLS,
+  ])];
+  const toFetch = needed.filter(s => !historyCache[cacheKey(range, s)]);
+
+  if (toFetch.length === 0) { updatePerfChart(); renderSeriesToggleButtons(); return; }
+
+  historyLoading = true;
+  const loadEl = document.getElementById('perf-loading');
+  if (loadEl) loadEl.style.display = 'flex';
+
+  try {
+    const url = `${API}?symbols=${toFetch.map(encodeURIComponent).join(',')}&range=${range}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    Object.entries(data).forEach(([sym, info]) => {
+      if (!info.error) {
+        if (info.history) historyCache[cacheKey(range, sym)] = info.history;
+        state.prices[sym] = { ...state.prices[sym], ...info };
+      }
+    });
+  } catch(e) {}
+
+  historyLoading = false;
+  if (loadEl) loadEl.style.display = 'none';
+  updatePerfChart();
+  renderSeriesToggleButtons();
+}
+
+function buildPerfDatasets() {
+  const range = state.chartRange;
+  const enabled = enabledSeries || new Set();
+
+  // Union of all timestamps across enabled series + portfolio holdings
+  const symList = [...enabled].filter(s => s !== PORTFOLIO_KEY);
+  const holdingSyms = state.holdings.map(h => h.symbol);
+  const allSyms = [...new Set([...symList, ...holdingSyms])];
+
+  const tsSet = new Set();
+  allSyms.forEach(sym => {
+    (historyCache[cacheKey(range, sym)] || []).forEach(p => tsSet.add(p.t));
+  });
+
+  const timestamps = [...tsSet].sort((a, b) => a - b);
+  if (!timestamps.length) return { labels: [], datasets: [] };
+
+  const labels = timestamps.map(t => {
+    const d = new Date(t * 1000);
+    return range === '1y'
+      ? d.toLocaleDateString('en-AU', { month: 'short', year: '2-digit' })
+      : d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
+  });
+
+  // Build forward-filled price array for a symbol
+  function priceSeries(sym) {
+    const hist = historyCache[cacheKey(range, sym)];
+    if (!hist || !hist.length) return null;
+    const map = {};
+    hist.forEach(p => { map[p.t] = p.c; });
+    let last = null;
+    return timestamps.map(t => { if (map[t] != null) last = map[t]; return last; });
+  }
+
+  // Normalise to 100 at first non-null value
+  function normalise(values) {
+    const first = values.find(v => v != null && v > 0);
+    if (!first) return values.map(() => null);
+    return values.map(v => v != null ? Math.round(v / first * 10000) / 100 : null);
+  }
+
+  const datasets = [];
+
+  // One line per enabled non-portfolio symbol
+  let colIdx = 0;
+  symList.forEach(sym => {
+    const values = priceSeries(sym);
+    colIdx++;
+    if (!values) return;
+    const color = BENCH_COLORS[sym] || CHART_COLORS[(colIdx - 1) % CHART_COLORS.length];
+    const isBench = BENCHMARK_SYMBOLS.includes(sym);
+    datasets.push({
+      label: sym,
+      data: normalise(values),
+      borderColor: color,
+      backgroundColor: color + '15',
+      borderWidth: isBench ? 1.5 : 1.5,
+      borderDash: isBench ? [5, 3] : [],
+      pointRadius: 0,
+      tension: 0.2,
+      spanGaps: true,
+    });
+  });
+
+  // Portfolio line
+  if (enabled.has(PORTFOLIO_KEY) && state.holdings.length > 0) {
+    const portValues = timestamps.map(t => {
+      let total = 0, anyPrice = false;
+      state.holdings.forEach(h => {
+        const series = priceSeries(h.symbol);
+        if (!series) return;
+        const idx = timestamps.indexOf(t);
+        const price = series[idx];
+        if (price == null) return;
+        const nativeCcy = state.prices[h.symbol]?.currency || h.currency;
+        const baseVal = toBase(parseFloat(h.qty) * price, nativeCcy);
+        if (baseVal != null) { total += baseVal; anyPrice = true; }
+      });
+      return anyPrice ? total : null;
+    });
+    datasets.push({
+      label: 'My Portfolio',
+      data: normalise(portValues),
+      borderColor: PORTFOLIO_COLOR,
+      backgroundColor: PORTFOLIO_COLOR + '18',
+      borderWidth: 2.5,
+      pointRadius: 0,
+      tension: 0.2,
+      spanGaps: true,
+      order: -1,
+    });
+  }
+
+  return { labels, datasets };
+}
+
+function updatePerfChart() {
+  const canvas = document.getElementById('perf-chart-canvas');
+  if (!canvas) return;
+  const { labels, datasets } = buildPerfDatasets();
+
+  const opts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    animation: { duration: 200 },
+    scales: {
+      x: {
+        ticks: { color: '#8892a4', maxTicksLimit: 8, maxRotation: 0, font: { size: 11 } },
+        grid: { color: '#1e1e35' },
+        border: { color: '#1e1e35' },
+      },
+      y: {
+        ticks: {
+          color: '#8892a4', font: { size: 11 },
+          callback: v => v.toFixed(0),
+        },
+        grid: { color: '#1e1e35' },
+        border: { color: '#1e1e35' },
+      },
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#0f0f1c',
+        borderColor: '#28284a',
+        borderWidth: 1,
+        titleColor: '#e2e8f0',
+        bodyColor: '#8892a4',
+        padding: 10,
+        callbacks: {
+          label: ctx => {
+            const v = ctx.raw;
+            if (v == null) return null;
+            const chg = (v - 100).toFixed(1);
+            return ` ${ctx.dataset.label}: ${v.toFixed(1)}  (${chg >= 0 ? '+' : ''}${chg}%)`;
+          },
+        },
+      },
+    },
+  };
+
+  if (!perfChart) {
+    perfChart = new Chart(canvas, { type: 'line', data: { labels, datasets }, options: opts });
+  } else {
+    perfChart.data.labels = labels;
+    perfChart.data.datasets = datasets;
+    perfChart.update('none');
+  }
+}
+
+function renderSeriesToggleButtons() {
+  const el = document.getElementById('series-toggles');
+  if (!el) return;
+  const range = state.chartRange;
+  const enabled = enabledSeries || new Set();
+
+  const allSeries = [
+    ...(state.holdings.length > 0 ? [PORTFOLIO_KEY] : []),
+    ...BENCHMARK_SYMBOLS,
+    ...state.watchlist.filter(s => !BENCHMARK_SYMBOLS.includes(s)),
+  ];
+
+  let colIdx = 0;
+  el.innerHTML = allSeries.map(sym => {
+    const isPort = sym === PORTFOLIO_KEY;
+    const label = isPort ? '💼 My Portfolio' : sym;
+    const color = isPort ? PORTFOLIO_COLOR
+      : BENCH_COLORS[sym] || CHART_COLORS[colIdx % CHART_COLORS.length];
+    if (!isPort && !BENCHMARK_SYMBOLS.includes(sym)) colIdx++;
+    const on = enabled.has(sym);
+    return `<button onclick="toggleSeries('${sym}')" style="
+      display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+      border-radius:20px;font-size:12px;font-weight:500;cursor:pointer;
+      background:${on ? color + '22' : 'var(--bg-card2)'};
+      border:1px solid ${on ? color : 'var(--border)'};
+      color:${on ? color : 'var(--muted)'};transition:all 0.15s;">
+      <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${on ? color : 'var(--dim)'}"></span>
+      ${label}
+    </button>`;
+  }).join('');
+}
+
+function renderRangeButtons() {
+  const el = document.getElementById('range-btns');
+  if (!el) return;
+  [['1mo','1M'],['3mo','3M'],['6mo','6M'],['1y','1Y']].forEach(([val, label]) => {
+    const active = state.chartRange === val;
+    el.innerHTML += `<button onclick="setChartRange('${val}')" style="
+      padding:3px 9px;border-radius:5px;font-size:12px;font-weight:500;cursor:pointer;
+      background:${active ? 'var(--accent)' : 'var(--bg-card2)'};
+      border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
+      color:${active ? '#fff' : 'var(--muted)'};">${label}</button>`;
+  });
+}
+
+function toggleSeries(sym) {
+  initEnabledSeries();
+  if (enabledSeries.has(sym)) {
+    if (enabledSeries.size > 1) enabledSeries.delete(sym);
+  } else {
+    enabledSeries.add(sym);
+    // Fetch history if we don't have it yet
+    if (sym !== PORTFOLIO_KEY && !historyCache[cacheKey(state.chartRange, sym)]) {
+      fetchHistory(); return;
+    }
+  }
+  updatePerfChart();
+  renderSeriesToggleButtons();
+}
+
+function setChartRange(range) {
+  state.chartRange = range;
+  const el = document.getElementById('range-btns');
+  if (el) el.innerHTML = '';
+  renderRangeButtons();
+  fetchHistory();
+}
+
+function togglePerfChart() {
+  state.chartCollapsed = !state.chartCollapsed;
+  const body = document.getElementById('perf-body');
+  const btn  = document.getElementById('perf-collapse-btn');
+  if (body) body.style.display = state.chartCollapsed ? 'none' : 'block';
+  if (btn)  btn.textContent = state.chartCollapsed ? '▼' : '▲';
+}
+
+function initPerfChart() {
+  initEnabledSeries();
+  const el = document.getElementById('range-btns');
+  if (el) el.innerHTML = '';
+  renderRangeButtons();
+  fetchHistory();
+}
+
+// ══════════════════════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════════════════════
 
@@ -1309,6 +1626,7 @@ loadState();
 document.getElementById('base-currency-select').value = state.baseCurrency;
 fetchPrices(true);
 startRefreshCycle();
+initPerfChart();
 </script>
 </body>
 </html>
