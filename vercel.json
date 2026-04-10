@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/prices.py": {
+      "runtime": "python3.9"
+    }
+  }
+}

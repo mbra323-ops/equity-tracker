@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EquiTrack — Portfolio Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:        #080812;
+      --bg-card:   #0f0f1c;
+      --bg-card2:  #13131f;
+      --bg-input:  #0a0a16;
+      --border:    #1e1e35;
+      --border2:   #28284a;
+      --text:      #e2e8f0;
+      --muted:     #8892a4;
+      --dim:       #3a4055;
+      --accent:    #6366f1;
+      --accent-h:  #818cf8;
+      --green:     #22c55e;
+      --green-bg:  #052e16;
+      --red:       #ef4444;
+      --red-bg:    #2d0e0e;
+      --yellow:    #f59e0b;
+      --blue:      #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+    a { color: var(--accent); }
+    button { font-family: inherit; cursor: pointer; border: none; }
+    input, select { font-family: inherit; font-size: 14px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    /* ── Layout ── */
+    .app-header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--bg-card); border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      height: 54px;
+    }
+    .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo span { color: var(--accent); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .refresh-info { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .refresh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s ease infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .refresh-dot.stale { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+    .refresh-dot.loading { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: spin-pulse 0.8s linear infinite; }
+    @keyframes spin-pulse { 0% { opacity:1; } 50% { opacity:0.3; } 100% { opacity:1; } }
+
+    .tabs { display: flex; gap: 2px; background: var(--bg); border-radius: 8px; padding: 3px; }
+    .tab-btn { padding: 5px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--muted); background: transparent; transition: all 0.15s; }
+    .tab-btn.active { background: var(--accent); color: #fff; }
+    .tab-btn:hover:not(.active) { color: var(--text); background: var(--border); }
+
+    .currency-select {
+      background: var(--bg-input); border: 1px solid var(--border2); color: var(--text);
+      padding: 4px 8px; border-radius: 6px; font-size: 12px; outline: none;
+    }
+    .currency-select:focus { border-color: var(--accent); }
+
+    .main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards ── */
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .card-sm { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+
+    /* ── Summary cards ── */
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat-card { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .stat-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
+    .stat-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Toolbar ── */
+    .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .search-box {
+      flex: 1; min-width: 180px; max-width: 320px;
+      background: var(--bg-input); border: 1px solid var(--border2); color: var(--text);
+      padding: 7px 12px; border-radius: 8px; outline: none;
+    }
+    .search-box:focus { border-color: var(--accent); }
+    .btn { padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: var(--bg-card2); border: 1px solid var(--border2); color: var(--text); }
+    .btn-danger { background: var(--red-bg); border: 1px solid #5a1e1e; color: var(--red); }
+    .btn-icon { padding: 5px 8px; font-size: 14px; background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; }
+    .btn-icon:hover { color: var(--text); border-color: var(--border2); }
+
+    /* ── Tables ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 500; padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th:first-child { text-align: left; }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: right; vertical-align: middle; white-space: nowrap; }
+    td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #ffffff05; }
+    .symbol-cell { font-weight: 600; font-size: 13px; }
+    .name-cell { color: var(--muted); font-size: 12px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+    .price-cell { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; }
+    .change-flash { transition: background 0.5s ease; }
+    .flash-green { background: #22c55e22 !important; }
+    .flash-red { background: #ef444422 !important; }
+
+    /* ── Change badges ── */
+    .chg { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 5px; font-variant-numeric: tabular-nums; }
+    .chg.up { color: var(--green); background: #052e1622; }
+    .chg.dn { color: var(--red); background: #2d0e0e44; }
+    .chg.flat { color: var(--muted); background: #ffffff08; }
+    .chg-lg { font-size: 14px; padding: 3px 8px; }
+
+    /* ── Market state badge ── */
+    .mkt-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+    .mkt-badge.open { background: #052e16; color: var(--green); }
+    .mkt-badge.pre { background: #1c1a0a; color: var(--yellow); }
+    .mkt-badge.post { background: #1a1a2e; color: #a78bfa; }
+    .mkt-badge.closed { background: var(--bg-card2); color: var(--muted); }
+
+    /* ── Sparkline ── */
+    .sparkline svg { display: block; }
+
+    /* ── Portfolio two-col layout ── */
+    .port-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    @media (max-width: 700px) { .port-top { grid-template-columns: 1fr; } }
+    .chart-wrap { position: relative; height: 220px; display: flex; align-items: center; justify-content: center; }
+
+    /* ── Benchmark row ── */
+    .bench-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .bench-chip { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+    .bench-label { font-size: 11px; color: var(--muted); }
+    .bench-val { font-size: 16px; font-weight: 700; }
+    .bench-chip.winner { border-color: var(--accent); background: #6366f110; }
+
+    /* ── Empty state ── */
+    .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+    .empty-icon { font-size: 36px; margin-bottom: 12px; }
+    .empty p { margin-bottom: 16px; }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: #00000080; backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--bg-card); border: 1px solid var(--border2); border-radius: 14px;
+      padding: 24px; width: 100%; max-width: 440px;
+      animation: modal-in 0.2s ease;
+    }
+    @keyframes modal-in { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 20px; }
+    .form-row { margin-bottom: 14px; }
+    .form-label { font-size: 12px; color: var(--muted); margin-bottom: 5px; display: block; }
+    .form-input {
+      width: 100%; background: var(--bg-input); border: 1px solid var(--border2);
+      color: var(--text); padding: 9px 12px; border-radius: 8px; outline: none;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .form-input::placeholder { color: var(--dim); }
+    .form-hint { font-size: 11px; color: var(--dim); margin-top: 4px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+    .symbol-preview { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px; display: none; }
+    .symbol-preview.visible { display: block; }
+
+    /* ── Error banner ── */
+    .error-banner { background: var(--red-bg); border: 1px solid #5a1e1e; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; display: none; }
+    .error-banner.visible { display: block; }
+
+    /* ── Misc ── */
+    .text-green { color: var(--green); }
+    .text-red { color: var(--red); }
+    .text-yellow { color: var(--yellow); }
+    .text-muted { color: var(--muted); }
+    .text-accent { color: var(--accent); }
+    .fw-6 { font-weight: 600; }
+    .fw-7 { font-weight: 700; }
+    .fz-12 { font-size: 12px; }
+    .fz-11 { font-size: 11px; }
+    .flex { display: flex; align-items: center; }
+    .gap-6 { gap: 6px; }
+    .gap-8 { gap: 8px; }
+    .mt-4 { margin-top: 4px; }
+    .mr-8 { margin-right: 8px; }
+    .loading-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .fade-in { animation: fade-in 0.3s ease; }
+    @keyframes fade-in { from { opacity:0; } to { opacity:1; } }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="app-header">
+  <div class="flex gap-8">
+    <div class="logo">Equi<span>Track</span></div>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('markets')">Markets</button>
+      <button class="tab-btn" onclick="switchTab('portfolio')">Portfolio</button>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="refresh-info">
+      <div class="refresh-dot" id="refresh-dot"></div>
+      <span id="refresh-label">–</span>
+    </div>
+    <button class="btn-icon" onclick="fetchPrices(true)" title="Refresh now">↻</button>
+    <select class="currency-select" id="base-currency-select" onchange="onBaseCurrencyChange(this.value)">
+      <option value="AUD">AUD</option>
+      <option value="USD">USD</option>
+      <option value="EUR">EUR</option>
+      <option value="GBP">GBP</option>
+    </select>
+  </div>
+</header>
+
+<!-- ── Main ── -->
+<div class="main">
+
+  <!-- ══════════════════════ MARKETS TAB ══════════════════════ -->
+  <div class="tab-panel active" id="tab-markets">
+    <div class="toolbar">
+      <input class="search-box" id="market-search" type="text" placeholder="Filter watchlist…" oninput="renderMarkets()">
+      <button class="btn btn-primary" onclick="openAddWatchlistModal()">+ Add Symbol</button>
+    </div>
+    <div class="error-banner" id="market-error"></div>
+    <div class="card">
+      <div class="table-wrap">
+        <table id="markets-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Name</th>
+              <th>Price</th>
+              <th>1D %</th>
+              <th>1W %</th>
+              <th>1M %</th>
+              <th>52W High</th>
+              <th>52W Low</th>
+              <th style="text-align:center">Trend</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="markets-tbody"></tbody>
+        </table>
+      </div>
+      <div id="markets-empty" class="empty hidden">
+        <div class="empty-icon">📈</div>
+        <p>No symbols in watchlist yet.</p>
+        <button class="btn btn-primary" onclick="openAddWatchlistModal()">+ Add Symbol</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ PORTFOLIO TAB ══════════════════════ -->
+  <div class="tab-panel" id="tab-portfolio">
+
+    <!-- Summary cards -->
+    <div class="summary-grid" id="port-summary"></div>
+
+    <!-- Benchmark comparison -->
+    <div class="card-sm" style="margin-bottom:16px" id="bench-section"></div>
+
+    <!-- Chart + allocation -->
+    <div class="port-top">
+      <div class="card">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Allocation</div>
+        <div class="chart-wrap">
+          <canvas id="alloc-chart"></canvas>
+          <div id="chart-empty" style="position:absolute;color:var(--muted);font-size:13px;display:none">No holdings</div>
+        </div>
+      </div>
+      <div class="card" id="port-stats-card">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px">Top Holdings</div>
+        <div id="top-holdings-list"></div>
+      </div>
+    </div>
+
+    <!-- Holdings table -->
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:14px">
+        <span style="font-size:15px;font-weight:700">Holdings</span>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary" onclick="openAddHoldingModal()">+ Add Holding</button>
+      </div>
+      <div class="error-banner" id="port-error"></div>
+      <div class="table-wrap">
+        <table id="holdings-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Name</th>
+              <th>Qty</th>
+              <th>Avg Buy</th>
+              <th>Current</th>
+              <th>Value (<span class="base-ccy-label">AUD</span>)</th>
+              <th>P&amp;L (<span class="base-ccy-label">AUD</span>)</th>
+              <th>P&amp;L %</th>
+              <th>Today</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="holdings-tbody"></tbody>
+        </table>
+      </div>
+      <div id="holdings-empty" class="empty hidden">
+        <div class="empty-icon">💼</div>
+        <p>No holdings yet. Add your first position.</p>
+        <button class="btn btn-primary" onclick="openAddHoldingModal()">+ Add Holding</button>
+      </div>
+    </div>
+  </div>
+</div><!-- /main -->
+
+<!-- ══════════════════════ MODALS ══════════════════════ -->
+
+<!-- Add to watchlist -->
+<div class="modal-overlay" id="modal-watchlist">
+  <div class="modal">
+    <div class="modal-title">Add Symbol to Watchlist</div>
+    <div class="form-row">
+      <label class="form-label">Ticker Symbol</label>
+      <input class="form-input" id="wl-symbol-input" placeholder="e.g. VAS.AX, AAPL, BTC-USD, ^AXJO" style="text-transform:uppercase">
+      <div class="form-hint">ASX: suffix .AX &nbsp;|&nbsp; Indexes: ^ prefix &nbsp;|&nbsp; Crypto: BTC-USD &nbsp;|&nbsp; FX: AUDUSD=X</div>
+    </div>
+    <div class="symbol-preview" id="wl-preview"></div>
+    <div class="form-row">
+      <button class="btn btn-ghost" style="width:100%" id="wl-lookup-btn" onclick="lookupWatchlistSymbol()">Look Up Symbol</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-watchlist')">Cancel</button>
+      <button class="btn btn-primary" id="wl-add-btn" onclick="confirmAddWatchlist()" disabled>Add to Watchlist</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add / Edit holding -->
+<div class="modal-overlay" id="modal-holding">
+  <div class="modal">
+    <div class="modal-title" id="holding-modal-title">Add Holding</div>
+    <input type="hidden" id="holding-edit-id">
+
+    <div class="form-row">
+      <label class="form-label">Ticker Symbol</label>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="h-symbol" placeholder="e.g. VAS.AX, AAPL, BTC-USD" style="text-transform:uppercase;flex:1">
+        <button class="btn btn-ghost" id="h-lookup-btn" onclick="lookupHoldingSymbol()">Look Up</button>
+      </div>
+    </div>
+    <div class="symbol-preview" id="h-preview"></div>
+
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">Quantity</label>
+        <input class="form-input" id="h-qty" type="number" min="0" step="any" placeholder="0">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Avg Buy Price</label>
+        <input class="form-input" id="h-price" type="number" min="0" step="any" placeholder="0.00">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">Currency</label>
+      <select class="form-input" id="h-currency">
+        <option value="AUD">AUD</option>
+        <option value="USD">USD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+        <option value="JPY">JPY</option>
+        <option value="HKD">HKD</option>
+        <option value="CAD">CAD</option>
+        <option value="NZD">NZD</option>
+        <option value="SGD">SGD</option>
+        <option value="CNY">CNY</option>
+      </select>
+      <div class="form-hint">Currency of the asset's home exchange (auto-detected on lookup)</div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">Notes (optional)</label>
+      <input class="form-input" id="h-notes" placeholder="e.g. Core holding, SMSF, etc.">
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-holding')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveHolding()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm delete -->
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-title">Remove Holding</div>
+    <p style="color:var(--muted);margin-bottom:20px" id="confirm-msg">Are you sure?</p>
+    <input type="hidden" id="confirm-id">
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-confirm')">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmDelete()">Remove</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════════
+
+const API = '/api/prices';
+const REFRESH_INTERVAL = 60; // seconds
+
+// Symbols always fetched for benchmark comparison (not shown in markets unless added)
+const BENCHMARK_SYMBOLS = ['^AXJO', '^GSPC'];
+
+// FX pairs to fetch per base currency to get "1 foreign = X base" rates
+const FX_PAIRS = {
+  AUD: { USD:'USDAUD=X', EUR:'EURAUD=X', GBP:'GBPAUD=X', JPY:'JPYAUD=X', HKD:'HKDAUD=X', CAD:'CADAUD=X', NZD:'NZDAUD=X', SGD:'SGDAUD=X', CNY:'CNYAUD=X' },
+  USD: { AUD:'AUDUSD=X', EUR:'EURUSD=X', GBP:'GBPUSD=X', JPY:'JPYUSD=X', HKD:'HKDUSD=X', CAD:'CADUSD=X', NZD:'NZDUSD=X', SGD:'SGDUSD=X', CNY:'CNYUSD=X' },
+  EUR: { AUD:'AUDEUR=X', USD:'USDEUR=X', GBP:'GBPEUR=X', JPY:'JPYEUR=X', HKD:'HKDEUR=X', CAD:'CADEUR=X', NZD:'NZDEUR=X' },
+  GBP: { AUD:'AUDGBP=X', USD:'USDGBP=X', EUR:'EURGBP=X', JPY:'JPYGBP=X', HKD:'HKDGBP=X', CAD:'CADGBP=X', NZD:'NZDGBP=X' },
+};
+
+const CHART_COLORS = [
+  '#6366f1','#22c55e','#3b82f6','#f59e0b','#ef4444',
+  '#a78bfa','#34d399','#60a5fa','#fbbf24','#f87171',
+  '#8b5cf6','#10b981','#2563eb','#d97706','#dc2626',
+];
+
+// ══════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════
+
+let state = {
+  watchlist: ['VAS.AX', 'NDQ.AX', '^AXJO', 'BTC-USD', 'ETH-USD', 'SPY', '^GSPC', 'AAPL'],
+  holdings: [],       // [{id, symbol, name, qty, avgBuyPrice, currency, notes, addedDate}]
+  prices:   {},       // {SYMBOL: {price, change, changePercent, ...}}
+  baseCurrency: 'AUD',
+  activeTab: 'markets',
+  refreshCountdown: REFRESH_INTERVAL,
+  refreshTimer: null,
+  countdownTimer: null,
+  isLoading: false,
+};
+
+function loadState() {
+  try {
+    const saved = localStorage.getItem('equitrack_v1');
+    if (saved) {
+      const s = JSON.parse(saved);
+      if (s.watchlist?.length)  state.watchlist    = s.watchlist;
+      if (s.holdings?.length)   state.holdings     = s.holdings;
+      if (s.baseCurrency)       state.baseCurrency = s.baseCurrency;
+    }
+  } catch(e) {}
+}
+
+function saveState() {
+  try {
+    localStorage.setItem('equitrack_v1', JSON.stringify({
+      watchlist: state.watchlist,
+      holdings:  state.holdings,
+      baseCurrency: state.baseCurrency,
+    }));
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════════════════════════
+
+function uuid() {
+  return Math.random().toString(36).slice(2,9) + Date.now().toString(36);
+}
+
+function fmtNum(n, decimals=2) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return n.toLocaleString('en-AU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function fmtCurrency(n, ccy, compact=false) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sym = { AUD:'A$', USD:'US$', EUR:'€', GBP:'£', JPY:'¥', HKD:'HK$', CAD:'C$', NZD:'NZ$', SGD:'S$', CNY:'¥' }[ccy] || (ccy + ' ');
+  if (compact && Math.abs(n) >= 1e6) return sym + (n/1e6).toFixed(2) + 'M';
+  if (compact && Math.abs(n) >= 1e3) return sym + (n/1e3).toFixed(1) + 'k';
+  const decimals = ['JPY','CNY'].includes(ccy) ? 0 : (Math.abs(n) < 10 ? 4 : 2);
+  return sym + Math.abs(n).toLocaleString('en-AU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function fmtPct(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function chgClass(n) {
+  if (!n || n === 0) return 'flat';
+  return n > 0 ? 'up' : 'dn';
+}
+
+function chgBadge(n, large=false) {
+  if (n === null || n === undefined || isNaN(n)) return '<span class="chg flat">—</span>';
+  const cls = chgClass(n) + (large ? ' chg-lg' : '');
+  const arrow = n > 0 ? '▲' : n < 0 ? '▼' : '';
+  return `<span class="chg ${cls}">${arrow} ${fmtPct(n)}</span>`;
+}
+
+// Convert a value in `fromCcy` to base currency
+function toBase(value, fromCcy) {
+  if (!value && value !== 0) return null;
+  if (fromCcy === state.baseCurrency) return value;
+  const pairs = FX_PAIRS[state.baseCurrency] || {};
+  const fxSym = pairs[fromCcy];
+  if (!fxSym) return value; // unknown — return as-is
+  const rate = state.prices[fxSym]?.price || 1;
+  return value * rate;
+}
+
+function getRate(fromCcy) {
+  if (fromCcy === state.baseCurrency) return 1;
+  const pairs = FX_PAIRS[state.baseCurrency] || {};
+  const fxSym = pairs[fromCcy];
+  return state.prices[fxSym]?.price || null;
+}
+
+// ══════════════════════════════════════════════════════════════
+// SPARKLINE
+// ══════════════════════════════════════════════════════════════
+
+function sparklineSVG(data, w=80, h=28) {
+  if (!data || data.length < 2) return '<span style="color:var(--dim);font-size:11px">—</span>';
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const pts = data.map((v,i) => {
+    const x = (i / (data.length-1)) * w;
+    const y = h - ((v-min)/range) * (h-2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const color = data[data.length-1] >= data[0] ? '#22c55e' : '#ef4444';
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// MARKET STATE BADGE
+// ══════════════════════════════════════════════════════════════
+
+function mktBadge(state_str) {
+  const map = {
+    REGULAR: ['open','Open'], PRE: ['pre','Pre'], PREPRE: ['pre','Pre'],
+    POST: ['post','Post'], POSTPOST: ['post','Post'], CLOSED: ['closed','Closed'],
+  };
+  const [cls, label] = map[state_str] || ['closed','–'];
+  return `<span class="mkt-badge ${cls}">${label}</span>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// API
+// ══════════════════════════════════════════════════════════════
+
+function getAllSymbols() {
+  // Watchlist + benchmark symbols + FX pairs needed + holding symbols
+  const syms = new Set([...state.watchlist, ...BENCHMARK_SYMBOLS]);
+  state.holdings.forEach(h => syms.add(h.symbol));
+
+  // FX pairs for base currency
+  const pairs = FX_PAIRS[state.baseCurrency] || {};
+  Object.values(pairs).forEach(p => syms.add(p));
+
+  return [...syms];
+}
+
+async function fetchPrices(manual=false) {
+  if (state.isLoading && !manual) return;
+  state.isLoading = true;
+  setRefreshDot('loading');
+
+  const symbols = getAllSymbols();
+  const url = `${API}?symbols=${symbols.map(encodeURIComponent).join(',')}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // Flash cells that changed
+    const oldPrices = { ...state.prices };
+    Object.entries(data).forEach(([sym, info]) => {
+      if (!info.error) {
+        if (oldPrices[sym]?.price && oldPrices[sym].price !== info.price) {
+          flashCell(sym, info.price > oldPrices[sym].price);
+        }
+        state.prices[sym] = info;
+      }
+    });
+
+    hideError('market-error');
+    hideError('port-error');
+  } catch(e) {
+    showError('market-error', `Failed to fetch prices: ${e.message}`);
+    showError('port-error', `Failed to fetch prices: ${e.message}`);
+    setRefreshDot('stale');
+    state.isLoading = false;
+    return;
+  }
+
+  state.isLoading = false;
+  state.refreshCountdown = REFRESH_INTERVAL;
+  setRefreshDot('live');
+  updateRefreshLabel();
+  renderAll();
+}
+
+function flashCell(sym, isUp) {
+  const cell = document.getElementById(`price-${sym.replace(/[^a-zA-Z0-9]/g,'_')}`);
+  if (!cell) return;
+  cell.classList.remove('flash-green','flash-red');
+  void cell.offsetWidth; // reflow
+  cell.classList.add(isUp ? 'flash-green' : 'flash-red');
+  setTimeout(() => cell.classList.remove('flash-green','flash-red'), 800);
+}
+
+function startRefreshCycle() {
+  if (state.countdownTimer) clearInterval(state.countdownTimer);
+  state.countdownTimer = setInterval(() => {
+    state.refreshCountdown--;
+    updateRefreshLabel();
+    if (state.refreshCountdown <= 0) fetchPrices();
+  }, 1000);
+}
+
+function updateRefreshLabel() {
+  const el = document.getElementById('refresh-label');
+  if (el) el.textContent = state.refreshCountdown > 0
+    ? `Refreshing in ${state.refreshCountdown}s`
+    : 'Refreshing…';
+}
+
+function setRefreshDot(mode) {
+  const el = document.getElementById('refresh-dot');
+  if (!el) return;
+  el.className = 'refresh-dot ' + (mode === 'live' ? '' : mode);
+}
+
+function showError(id, msg) { const el = document.getElementById(id); if(el){el.textContent=msg;el.classList.add('visible');} }
+function hideError(id) { const el = document.getElementById(id); if(el) el.classList.remove('visible'); }
+
+// ══════════════════════════════════════════════════════════════
+// PORTFOLIO CALCULATIONS
+// ══════════════════════════════════════════════════════════════
+
+function calcHolding(h) {
+  const p = state.prices[h.symbol];
+  if (!p || p.error || !p.price) return null;
+
+  const qty = parseFloat(h.qty);
+  const avgBuy = parseFloat(h.avgBuyPrice);
+  const nativeCcy = p.currency || h.currency;
+
+  const currentPriceNative = p.price;
+  const costBasisNative     = qty * avgBuy;
+  const currentValueNative  = qty * currentPriceNative;
+  const pnlNative           = currentValueNative - costBasisNative;
+  const pnlPct              = costBasisNative ? (pnlNative / costBasisNative) * 100 : 0;
+
+  const rate            = getRate(nativeCcy);
+  const currentValue    = toBase(currentValueNative, nativeCcy);
+  const costBasis       = toBase(costBasisNative, nativeCcy);
+  const pnl             = currentValue !== null && costBasis !== null ? currentValue - costBasis : null;
+
+  const dayChangePct    = p.changePercent || 0;
+  const dayChangeBase   = currentValue !== null ? (currentValue * dayChangePct / 100) : null;
+
+  return {
+    symbol: h.symbol, name: p.name || h.name || h.symbol,
+    qty, avgBuy, nativeCcy,
+    currentPriceNative, costBasisNative, currentValueNative,
+    currentValue, costBasis, pnl, pnlPct, rate,
+    dayChangePct, dayChangeBase,
+    weekChangePct: p.weekChangePercent,
+    monthChangePct: p.monthChangePercent,
+    sparkline: p.sparkline || [],
+    notes: h.notes || '',
+  };
+}
+
+function calcPortfolio() {
+  const holdings = state.holdings.map(h => ({ h, calc: calcHolding(h) })).filter(x => x.calc);
+
+  const totalValue    = holdings.reduce((s, x) => s + (x.calc.currentValue || 0), 0);
+  const totalCost     = holdings.reduce((s, x) => s + (x.calc.costBasis   || 0), 0);
+  const totalPnl      = totalValue - totalCost;
+  const totalPnlPct   = totalCost ? (totalPnl / totalCost) * 100 : 0;
+
+  // Daily change: weighted by current value
+  const totalDayChange = holdings.reduce((s, x) => s + (x.calc.dayChangeBase || 0), 0);
+  const totalDayChangePct = totalValue > 0 ? (totalDayChange / (totalValue - totalDayChange)) * 100 : 0;
+
+  return { holdings, totalValue, totalCost, totalPnl, totalPnlPct, totalDayChange, totalDayChangePct };
+}
+
+// ══════════════════════════════════════════════════════════════
+// RENDER: MARKETS TAB
+// ══════════════════════════════════════════════════════════════
+
+function renderMarkets() {
+  const filter = document.getElementById('market-search')?.value.trim().toLowerCase() || '';
+  const tbody  = document.getElementById('markets-tbody');
+  const empty  = document.getElementById('markets-empty');
+  if (!tbody) return;
+
+  const visible = state.watchlist.filter(sym =>
+    !filter || sym.toLowerCase().includes(filter) ||
+    (state.prices[sym]?.name || '').toLowerCase().includes(filter)
+  );
+
+  if (visible.length === 0 && state.watchlist.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = visible.map(sym => {
+    const p  = state.prices[sym];
+    const id = sym.replace(/[^a-zA-Z0-9]/g,'_');
+
+    if (!p || p.error) {
+      return `<tr>
+        <td class="symbol-cell">${sym}</td>
+        <td class="name-cell text-muted">${p?.error || 'Loading…'}</td>
+        <td colspan="8" class="text-muted">—</td>
+        <td><button class="btn-icon" onclick="removeFromWatchlist('${sym}')" title="Remove">✕</button></td>
+      </tr>`;
+    }
+
+    const priceFmt = fmtCurrency(p.price, p.currency);
+    const hiPct    = p.fiftyTwoWeekHigh ? Math.round((p.price / p.fiftyTwoWeekHigh) * 100) : null;
+
+    return `<tr class="change-flash" id="row-${id}">
+      <td class="symbol-cell">${sym}</td>
+      <td class="name-cell text-muted">${p.name || '—'}</td>
+      <td class="price-cell" id="price-${id}">${priceFmt} <span style="font-size:11px;color:var(--muted)">${p.currency}</span></td>
+      <td>${chgBadge(p.changePercent)}</td>
+      <td>${chgBadge(p.weekChangePercent)}</td>
+      <td>${chgBadge(p.monthChangePercent)}</td>
+      <td class="text-muted fz-12">${p.fiftyTwoWeekHigh ? fmtCurrency(p.fiftyTwoWeekHigh, p.currency) : '—'}</td>
+      <td class="text-muted fz-12">${p.fiftyTwoWeekLow  ? fmtCurrency(p.fiftyTwoWeekLow,  p.currency) : '—'}</td>
+      <td style="text-align:center" class="sparkline">${sparklineSVG(p.sparkline)}</td>
+      <td>${mktBadge(p.marketState)}</td>
+      <td style="display:flex;gap:4px;justify-content:flex-end">
+        <button class="btn-icon" onclick="quickAddHolding('${sym}')" title="Add to portfolio">+</button>
+        <button class="btn-icon" onclick="removeFromWatchlist('${sym}')" title="Remove">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// RENDER: PORTFOLIO TAB
+// ══════════════════════════════════════════════════════════════
+
+let allocChart = null;
+
+function renderPortfolio() {
+  const port = calcPortfolio();
+  renderSummaryCards(port);
+  renderBenchmarks(port);
+  renderAllocChart(port);
+  renderTopHoldings(port);
+  renderHoldingsTable(port);
+}
+
+function renderSummaryCards(port) {
+  const el = document.getElementById('port-summary');
+  if (!el) return;
+  const ccy = state.baseCurrency;
+  const hasData = port.holdings.length > 0;
+
+  el.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Total Value</div>
+      <div class="stat-value">${hasData ? fmtCurrency(port.totalValue, ccy, true) : '—'}</div>
+      <div class="stat-sub">${state.baseCurrency} · ${state.holdings.length} holding${state.holdings.length !== 1 ? 's' : ''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Unrealised P&amp;L</div>
+      <div class="stat-value ${port.totalPnl >= 0 ? 'text-green' : 'text-red'}">${hasData ? (port.totalPnl >= 0 ? '+' : '') + fmtCurrency(port.totalPnl, ccy, true) : '—'}</div>
+      <div class="stat-sub">${hasData ? fmtPct(port.totalPnlPct) : '—'} overall</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cost Basis</div>
+      <div class="stat-value">${hasData ? fmtCurrency(port.totalCost, ccy, true) : '—'}</div>
+      <div class="stat-sub">Total invested (${ccy})</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Today's Change</div>
+      <div class="stat-value ${port.totalDayChange >= 0 ? 'text-green' : 'text-red'}">${hasData ? (port.totalDayChange >= 0 ? '+' : '') + fmtCurrency(port.totalDayChange, ccy, true) : '—'}</div>
+      <div class="stat-sub">${hasData ? fmtPct(port.totalDayChangePct) : '—'} today</div>
+    </div>
+  `;
+}
+
+function renderBenchmarks(port) {
+  const el = document.getElementById('bench-section');
+  if (!el) return;
+
+  const axjo = state.prices['^AXJO'];
+  const gspc  = state.prices['^GSPC'];
+  const portPct = port.holdings.length > 0 ? port.totalDayChangePct : null;
+
+  const benchmarks = [
+    { label: 'My Portfolio (today)', pct: portPct, highlight: true },
+    { label: 'ASX 200 (^AXJO)',      pct: axjo?.changePercent,  highlight: false },
+    { label: 'S&P 500 (^GSPC)',      pct: gspc?.changePercent,  highlight: false },
+  ];
+
+  // Determine winner
+  const validPcts = benchmarks.map(b => b.pct).filter(p => p !== null && p !== undefined);
+  const maxPct = validPcts.length ? Math.max(...validPcts) : null;
+
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">Today vs Benchmarks</div>
+    <div class="bench-row">
+      ${benchmarks.map(b => `
+        <div class="bench-chip ${b.pct !== null && b.pct === maxPct ? 'winner' : ''}">
+          <div class="bench-label">${b.label}</div>
+          <div class="bench-val ${b.pct === null ? 'text-muted' : b.pct >= 0 ? 'text-green' : 'text-red'}">
+            ${b.pct !== null ? fmtPct(b.pct) : '—'}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderAllocChart(port) {
+  const canvas = document.getElementById('alloc-chart');
+  const emptyEl = document.getElementById('chart-empty');
+  if (!canvas) return;
+
+  if (port.holdings.length === 0) {
+    canvas.style.display = 'none';
+    emptyEl.style.display = 'block';
+    if (allocChart) { allocChart.destroy(); allocChart = null; }
+    return;
+  }
+  canvas.style.display = 'block';
+  emptyEl.style.display = 'none';
+
+  const labels = port.holdings.map(x => x.calc.symbol);
+  const data   = port.holdings.map(x => x.calc.currentValue || 0);
+  const colors = port.holdings.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+
+  if (allocChart) {
+    allocChart.data.labels = labels;
+    allocChart.data.datasets[0].data = data;
+    allocChart.data.datasets[0].backgroundColor = colors;
+    allocChart.update('none');
+  } else {
+    allocChart = new Chart(canvas, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: '#080812', borderWidth: 2, hoverBorderWidth: 3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '65%',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const val = ctx.raw;
+                const pct = ((val / port.totalValue) * 100).toFixed(1);
+                return ` ${fmtCurrency(val, state.baseCurrency)} (${pct}%)`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+}
+
+function renderTopHoldings(port) {
+  const el = document.getElementById('top-holdings-list');
+  if (!el) return;
+
+  if (port.holdings.length === 0) {
+    el.innerHTML = '<div class="text-muted fz-12" style="padding:8px 0">No holdings yet.</div>';
+    return;
+  }
+
+  const sorted = [...port.holdings].sort((a,b) => (b.calc.currentValue||0) - (a.calc.currentValue||0));
+  const total  = port.totalValue;
+
+  el.innerHTML = sorted.slice(0, 8).map((x, i) => {
+    const c = x.calc;
+    const pct = total ? (c.currentValue / total * 100) : 0;
+    const color = CHART_COLORS[port.holdings.indexOf(x) % CHART_COLORS.length];
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">
+      <div style="width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="fw-6 fz-12">${c.symbol}</span>
+          <span class="fz-12">${fmtCurrency(c.currentValue, state.baseCurrency)}</span>
+        </div>
+        <div style="background:var(--border);height:3px;border-radius:2px;margin-top:4px">
+          <div style="background:${color};height:3px;border-radius:2px;width:${pct.toFixed(1)}%"></div>
+        </div>
+      </div>
+      <span class="fz-11 text-muted" style="min-width:38px;text-align:right">${pct.toFixed(1)}%</span>
+    </div>`;
+  }).join('');
+}
+
+function renderHoldingsTable(port) {
+  const tbody = document.getElementById('holdings-tbody');
+  const empty = document.getElementById('holdings-empty');
+  if (!tbody) return;
+
+  if (state.holdings.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  // Update base currency labels in headers
+  document.querySelectorAll('.base-ccy-label').forEach(el => el.textContent = state.baseCurrency);
+
+  tbody.innerHTML = port.holdings.map(({h, calc: c}) => {
+    if (!c) {
+      return `<tr>
+        <td class="symbol-cell">${h.symbol}</td>
+        <td class="text-muted fz-12">${h.name || '—'}</td>
+        <td>${fmtNum(h.qty, 4)}</td>
+        <td colspan="5" class="text-muted">Price unavailable</td>
+        <td></td>
+        <td style="display:flex;gap:4px;justify-content:flex-end">
+          <button class="btn-icon" onclick="openEditHoldingModal('${h.id}')">✎</button>
+          <button class="btn-icon" onclick="openDeleteModal('${h.id}', '${h.symbol}')">✕</button>
+        </td>
+      </tr>`;
+    }
+
+    const rateNote = c.rate && c.nativeCcy !== state.baseCurrency
+      ? `<span class="fz-11 text-muted"> @${c.rate.toFixed(4)}</span>` : '';
+
+    return `<tr>
+      <td class="symbol-cell">${c.symbol}</td>
+      <td class="name-cell text-muted">${c.name}</td>
+      <td class="text-muted">${fmtNum(c.qty, c.qty < 1 ? 6 : 2)}</td>
+      <td class="text-muted fz-12">${fmtCurrency(c.avgBuy, c.nativeCcy)}</td>
+      <td class="fw-6">${fmtCurrency(c.currentPriceNative, c.nativeCcy)} <span class="fz-11 text-muted">${c.nativeCcy}</span></td>
+      <td class="fw-6">${c.currentValue !== null ? fmtCurrency(c.currentValue, state.baseCurrency) : '—'}${rateNote}</td>
+      <td class="${c.pnl !== null && c.pnl >= 0 ? 'text-green' : 'text-red'} fw-6">
+        ${c.pnl !== null ? (c.pnl >= 0 ? '+' : '') + fmtCurrency(c.pnl, state.baseCurrency) : '—'}
+      </td>
+      <td>${chgBadge(c.pnlPct)}</td>
+      <td>${chgBadge(c.dayChangePct)}</td>
+      <td style="display:flex;gap:4px;justify-content:flex-end;min-width:64px">
+        <button class="btn-icon" onclick="openEditHoldingModal('${h.id}')">✎</button>
+        <button class="btn-icon" onclick="openDeleteModal('${h.id}', '${h.symbol}')">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Totals row
+  const totalValue = port.holdings.reduce((s, x) => s + (x.calc?.currentValue || 0), 0);
+  const totalPnl   = port.holdings.reduce((s, x) => s + (x.calc?.pnl || 0), 0);
+  if (port.holdings.length > 1) {
+    tbody.innerHTML += `<tr style="border-top:1px solid var(--border2)">
+      <td class="fw-7" colspan="5" style="text-align:left">Total</td>
+      <td class="fw-7">${fmtCurrency(totalValue, state.baseCurrency)}</td>
+      <td class="fw-7 ${totalPnl >= 0 ? 'text-green' : 'text-red'}">${(totalPnl >= 0 ? '+' : '') + fmtCurrency(totalPnl, state.baseCurrency)}</td>
+      <td colspan="3"></td>
+    </tr>`;
+  }
+}
+
+function renderAll() {
+  renderMarkets();
+  renderPortfolio();
+}
+
+// ══════════════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════════════
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(tab)));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab)?.classList.add('active');
+  renderAll();
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODALS
+// ══════════════════════════════════════════════════════════════
+
+function openModal(id)  { document.getElementById(id)?.classList.add('open'); }
+function closeModal(id) { document.getElementById(id)?.classList.remove('open'); }
+
+// ── Watchlist modal ──
+
+function openAddWatchlistModal() {
+  document.getElementById('wl-symbol-input').value = '';
+  document.getElementById('wl-preview').classList.remove('visible');
+  document.getElementById('wl-add-btn').disabled = true;
+  openModal('modal-watchlist');
+  setTimeout(() => document.getElementById('wl-symbol-input').focus(), 50);
+}
+
+async function lookupWatchlistSymbol() {
+  const sym = document.getElementById('wl-symbol-input').value.trim().toUpperCase();
+  if (!sym) return;
+  const btn = document.getElementById('wl-lookup-btn');
+  btn.disabled = true; btn.textContent = 'Looking up…';
+
+  try {
+    const res  = await fetch(`${API}?symbols=${encodeURIComponent(sym)}`);
+    const data = await res.json();
+    const info = data[sym];
+    const prev = document.getElementById('wl-preview');
+
+    if (!info || info.error) {
+      prev.innerHTML = `<span style="color:var(--red)">Symbol not found: ${sym}</span>`;
+      prev.classList.add('visible');
+      document.getElementById('wl-add-btn').disabled = true;
+    } else {
+      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>`;
+      prev.classList.add('visible');
+      document.getElementById('wl-add-btn').disabled = false;
+      // Cache the price
+      state.prices[sym] = info;
+    }
+  } catch(e) {
+    document.getElementById('wl-preview').innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+    document.getElementById('wl-preview').classList.add('visible');
+  }
+
+  btn.disabled = false; btn.textContent = 'Look Up Symbol';
+}
+
+function confirmAddWatchlist() {
+  const sym = document.getElementById('wl-symbol-input').value.trim().toUpperCase();
+  if (!sym || state.watchlist.includes(sym)) { closeModal('modal-watchlist'); return; }
+  state.watchlist.push(sym);
+  saveState();
+  closeModal('modal-watchlist');
+  fetchPrices(true);
+}
+
+function removeFromWatchlist(sym) {
+  state.watchlist = state.watchlist.filter(s => s !== sym);
+  saveState();
+  renderMarkets();
+}
+
+// ── Holding modal ──
+
+function openAddHoldingModal(prefillSymbol='') {
+  document.getElementById('holding-modal-title').textContent = 'Add Holding';
+  document.getElementById('holding-edit-id').value = '';
+  document.getElementById('h-symbol').value  = prefillSymbol.toUpperCase();
+  document.getElementById('h-qty').value     = '';
+  document.getElementById('h-price').value   = '';
+  document.getElementById('h-currency').value = 'AUD';
+  document.getElementById('h-notes').value   = '';
+  document.getElementById('h-preview').classList.remove('visible');
+  openModal('modal-holding');
+  if (!prefillSymbol) setTimeout(() => document.getElementById('h-symbol').focus(), 50);
+  else lookupHoldingSymbol();
+}
+
+function quickAddHolding(sym) {
+  openAddHoldingModal(sym);
+}
+
+function openEditHoldingModal(id) {
+  const h = state.holdings.find(x => x.id === id);
+  if (!h) return;
+  document.getElementById('holding-modal-title').textContent = 'Edit Holding';
+  document.getElementById('holding-edit-id').value  = h.id;
+  document.getElementById('h-symbol').value         = h.symbol;
+  document.getElementById('h-qty').value            = h.qty;
+  document.getElementById('h-price').value          = h.avgBuyPrice;
+  document.getElementById('h-currency').value       = h.currency || 'AUD';
+  document.getElementById('h-notes').value          = h.notes || '';
+
+  const prev = document.getElementById('h-preview');
+  const p = state.prices[h.symbol];
+  if (p && !p.error) {
+    prev.innerHTML = `<strong>${p.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(p.price, p.currency)} &nbsp;<span class="text-muted fz-11">${p.currency}</span>`;
+    prev.classList.add('visible');
+  }
+  openModal('modal-holding');
+}
+
+async function lookupHoldingSymbol() {
+  const sym = document.getElementById('h-symbol').value.trim().toUpperCase();
+  if (!sym) return;
+  const btn = document.getElementById('h-lookup-btn');
+  btn.disabled = true; btn.textContent = '…';
+
+  try {
+    const res  = await fetch(`${API}?symbols=${encodeURIComponent(sym)}`);
+    const data = await res.json();
+    const info = data[sym];
+    const prev = document.getElementById('h-preview');
+
+    if (!info || info.error) {
+      prev.innerHTML = `<span style="color:var(--red)">Symbol not found</span>`;
+    } else {
+      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>`;
+      // Auto-set currency
+      if (info.currency) document.getElementById('h-currency').value = info.currency;
+      state.prices[sym] = info;
+    }
+    prev.classList.add('visible');
+  } catch(e) {}
+
+  btn.disabled = false; btn.textContent = 'Look Up';
+}
+
+function saveHolding() {
+  const id      = document.getElementById('holding-edit-id').value;
+  const symbol  = document.getElementById('h-symbol').value.trim().toUpperCase();
+  const qty     = parseFloat(document.getElementById('h-qty').value);
+  const price   = parseFloat(document.getElementById('h-price').value);
+  const ccy     = document.getElementById('h-currency').value;
+  const notes   = document.getElementById('h-notes').value.trim();
+
+  if (!symbol || isNaN(qty) || isNaN(price) || qty <= 0 || price < 0) return;
+
+  const name = state.prices[symbol]?.name || symbol;
+
+  if (id) {
+    // Edit
+    const idx = state.holdings.findIndex(h => h.id === id);
+    if (idx >= 0) state.holdings[idx] = { ...state.holdings[idx], symbol, qty, avgBuyPrice: price, currency: ccy, name, notes };
+  } else {
+    // Add — merge if symbol exists
+    const existing = state.holdings.find(h => h.symbol === symbol);
+    if (existing) {
+      existing.qty = qty; existing.avgBuyPrice = price; existing.currency = ccy; existing.notes = notes; existing.name = name;
+    } else {
+      state.holdings.push({ id: uuid(), symbol, name, qty, avgBuyPrice: price, currency: ccy, notes, addedDate: new Date().toISOString().slice(0,10) });
+    }
+    // Auto-add to watchlist
+    if (!state.watchlist.includes(symbol)) state.watchlist.push(symbol);
+  }
+
+  saveState();
+  closeModal('modal-holding');
+  fetchPrices(true);
+}
+
+// ── Delete modal ──
+
+function openDeleteModal(id, symbol) {
+  document.getElementById('confirm-id').value  = id;
+  document.getElementById('confirm-msg').textContent = `Remove ${symbol} from your portfolio?`;
+  openModal('modal-confirm');
+}
+
+function confirmDelete() {
+  const id = document.getElementById('confirm-id').value;
+  state.holdings = state.holdings.filter(h => h.id !== id);
+  saveState();
+  closeModal('modal-confirm');
+  renderPortfolio();
+}
+
+// Close modal on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+  if (e.key === 'Enter') {
+    if (document.getElementById('modal-watchlist').classList.contains('open')) {
+      const addBtn = document.getElementById('wl-add-btn');
+      if (!addBtn.disabled) confirmAddWatchlist();
+      else lookupWatchlistSymbol();
+    }
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════════════════════
+
+function onBaseCurrencyChange(ccy) {
+  state.baseCurrency = ccy;
+  saveState();
+  fetchPrices(true);
+}
+
+// ══════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════
+
+loadState();
+document.getElementById('base-currency-select').value = state.baseCurrency;
+fetchPrices(true);
+startRefreshCycle();
+</script>
+</body>
+</html>
