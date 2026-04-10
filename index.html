@@ -1022,32 +1022,45 @@ function openAddWatchlistModal() {
   setTimeout(() => document.getElementById('wl-symbol-input').focus(), 50);
 }
 
+// Shared lookup: tries sym as-is, then sym+.AX if not found
+async function resolveSymbol(sym) {
+  const tryFetch = async (s) => {
+    const res  = await fetch(`${API}?symbols=${encodeURIComponent(s)}`);
+    const data = await res.json();
+    const info = data[s];
+    return (!info || info.error) ? null : { sym: s, info };
+  };
+  let result = await tryFetch(sym);
+  if (!result && !sym.includes('.') && !sym.includes('-') && !sym.startsWith('^')) {
+    result = await tryFetch(sym + '.AX');
+  }
+  return result; // null if not found, else { sym, info }
+}
+
 async function lookupWatchlistSymbol() {
-  const sym = document.getElementById('wl-symbol-input').value.trim().toUpperCase();
-  if (!sym) return;
-  const btn = document.getElementById('wl-lookup-btn');
+  const raw = document.getElementById('wl-symbol-input').value.trim().toUpperCase();
+  if (!raw) return;
+  const btn  = document.getElementById('wl-lookup-btn');
+  const prev = document.getElementById('wl-preview');
   btn.disabled = true; btn.textContent = 'Looking up…';
 
   try {
-    const res  = await fetch(`${API}?symbols=${encodeURIComponent(sym)}`);
-    const data = await res.json();
-    const info = data[sym];
-    const prev = document.getElementById('wl-preview');
-
-    if (!info || info.error) {
-      prev.innerHTML = `<span style="color:var(--red)">Symbol not found: ${sym}</span>`;
+    const result = await resolveSymbol(raw);
+    if (!result) {
+      prev.innerHTML = `<span style="color:var(--red)">Symbol not found: ${raw}. Try adding .AX for ASX stocks, or check the ticker.</span>`;
       prev.classList.add('visible');
       document.getElementById('wl-add-btn').disabled = true;
     } else {
-      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>`;
+      const { sym, info } = result;
+      if (sym !== raw) document.getElementById('wl-symbol-input').value = sym;
+      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>${sym !== raw ? ` &nbsp;<span style="color:var(--yellow);font-size:11px">Resolved to ${sym}</span>` : ''}`;
       prev.classList.add('visible');
       document.getElementById('wl-add-btn').disabled = false;
-      // Cache the price
       state.prices[sym] = info;
     }
   } catch(e) {
-    document.getElementById('wl-preview').innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
-    document.getElementById('wl-preview').classList.add('visible');
+    prev.innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+    prev.classList.add('visible');
   }
 
   btn.disabled = false; btn.textContent = 'Look Up Symbol';
@@ -1109,27 +1122,28 @@ function openEditHoldingModal(id) {
 }
 
 async function lookupHoldingSymbol() {
-  const sym = document.getElementById('h-symbol').value.trim().toUpperCase();
-  if (!sym) return;
-  const btn = document.getElementById('h-lookup-btn');
+  const raw  = document.getElementById('h-symbol').value.trim().toUpperCase();
+  if (!raw) return;
+  const btn  = document.getElementById('h-lookup-btn');
+  const prev = document.getElementById('h-preview');
   btn.disabled = true; btn.textContent = '…';
 
   try {
-    const res  = await fetch(`${API}?symbols=${encodeURIComponent(sym)}`);
-    const data = await res.json();
-    const info = data[sym];
-    const prev = document.getElementById('h-preview');
-
-    if (!info || info.error) {
-      prev.innerHTML = `<span style="color:var(--red)">Symbol not found</span>`;
+    const result = await resolveSymbol(raw);
+    if (!result) {
+      prev.innerHTML = `<span style="color:var(--red)">Symbol not found. Try adding .AX for ASX stocks.</span>`;
     } else {
-      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>`;
-      // Auto-set currency
+      const { sym, info } = result;
+      if (sym !== raw) document.getElementById('h-symbol').value = sym;
+      prev.innerHTML = `<strong>${info.name}</strong> &nbsp;·&nbsp; ${fmtCurrency(info.price, info.currency)} &nbsp;·&nbsp; ${chgBadge(info.changePercent)} &nbsp;<span class="text-muted fz-11">${info.currency}</span>${sym !== raw ? ` &nbsp;<span style="color:var(--yellow);font-size:11px">Resolved to ${sym}</span>` : ''}`;
       if (info.currency) document.getElementById('h-currency').value = info.currency;
       state.prices[sym] = info;
     }
     prev.classList.add('visible');
-  } catch(e) {}
+  } catch(e) {
+    prev.innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+    prev.classList.add('visible');
+  }
 
   btn.disabled = false; btn.textContent = 'Look Up';
 }
