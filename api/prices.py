@@ -73,9 +73,9 @@ def fetch_symbol(symbol):
         return symbol, {'error': str(e)}
 
 
-@app.route('/api/prices', methods=['GET', 'OPTIONS'])
-@app.route('/', methods=['GET', 'OPTIONS'])
-def prices():
+@app.route('/', defaults={'path': ''}, methods=['GET', 'OPTIONS'])
+@app.route('/<path:path>', methods=['GET', 'OPTIONS'])
+def prices(path=None):
     if request.method == 'OPTIONS':
         resp = app.make_default_options_response()
         resp.headers['Access-Control-Allow-Origin'] = '*'
