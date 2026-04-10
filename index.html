@@ -196,6 +196,21 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .fade-in { animation: fade-in 0.3s ease; }
     @keyframes fade-in { from { opacity:0; } to { opacity:1; } }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--bg-card2); border: 1px solid var(--border2);
+      color: var(--text); padding: 10px 20px; border-radius: 10px;
+      font-size: 13px; z-index: 200; white-space: nowrap;
+      box-shadow: 0 4px 20px #00000060;
+      animation: toast-in 0.25s ease;
+      display: none;
+    }
+    .toast.show { display: block; }
+    .toast.success { border-color: var(--green); color: var(--green); }
+    .toast.error   { border-color: var(--red);   color: var(--red); }
+    @keyframes toast-in { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
   </style>
 </head>
 <body>
@@ -215,6 +230,8 @@
       <span id="refresh-label">–</span>
     </div>
     <button class="btn-icon" onclick="fetchPrices(true)" title="Refresh now">↻</button>
+    <button class="btn-icon" onclick="exportPortfolio()" title="Download backup">⬇ Backup</button>
+    <label class="btn-icon" title="Restore from backup" style="cursor:pointer">⬆ Restore<input type="file" accept=".json" onchange="importPortfolio(event)" style="display:none"></label>
     <select class="currency-select" id="base-currency-select" onchange="onBaseCurrencyChange(this.value)">
       <option value="AUD">AUD</option>
       <option value="USD">USD</option>
@@ -322,6 +339,9 @@
     </div>
   </div>
 </div><!-- /main -->
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast"></div>
 
 <!-- ══════════════════════ MODALS ══════════════════════ -->
 
@@ -466,6 +486,16 @@ function loadState() {
   } catch(e) {}
 }
 
+let toastTimer = null;
+function showToast(msg, type='success', duration=3000) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `toast show ${type}`;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
 function saveState() {
   try {
     localStorage.setItem('equitrack_v1', JSON.stringify({
@@ -474,6 +504,51 @@ function saveState() {
       baseCurrency: state.baseCurrency,
     }));
   } catch(e) {}
+}
+
+function exportPortfolio() {
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    baseCurrency: state.baseCurrency,
+    watchlist: state.watchlist,
+    holdings: state.holdings,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  a.href     = url;
+  a.download = `equitrack-backup-${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Backup downloaded ✓');
+}
+
+function importPortfolio(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.holdings || !Array.isArray(data.holdings)) throw new Error('Invalid backup file');
+      if (data.watchlist)    state.watchlist    = data.watchlist;
+      if (data.holdings)     state.holdings     = data.holdings;
+      if (data.baseCurrency) {
+        state.baseCurrency = data.baseCurrency;
+        document.getElementById('base-currency-select').value = data.baseCurrency;
+      }
+      saveState();
+      showToast(`Restored ${data.holdings.length} holding${data.holdings.length !== 1 ? 's' : ''} ✓`);
+      fetchPrices(true);
+    } catch(err) {
+      showToast('Import failed — invalid file', 'error');
+    }
+    // Reset file input so same file can be re-imported if needed
+    event.target.value = '';
+  };
+  reader.readAsText(file);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1178,6 +1253,7 @@ function saveHolding() {
 
   saveState();
   closeModal('modal-holding');
+  showToast('Holding saved — download a backup from the header ⬇', 'success', 5000);
   fetchPrices(true);
 }
 
@@ -1194,6 +1270,7 @@ function confirmDelete() {
   state.holdings = state.holdings.filter(h => h.id !== id);
   saveState();
   closeModal('modal-confirm');
+  showToast('Holding removed — download a backup from the header ⬇', 'success', 5000);
   renderPortfolio();
 }
 
