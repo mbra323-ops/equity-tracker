@@ -1,11 +1,13 @@
-from http.server import BaseHTTPRequestHandler
-import json
+from flask import Flask, request, jsonify
 import urllib.request
 import urllib.parse
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+app = Flask(__name__)
+
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept': '*/*',
 }
 
@@ -21,11 +23,11 @@ def fetch_symbol(symbol):
         chart = raw.get('chart', {})
         error = chart.get('error')
         if error:
-            return symbol, {'error': error.get('description', 'Unknown error'), 'symbol': symbol}
+            return symbol, {'error': error.get('description', 'Unknown error')}
 
         results = chart.get('result')
         if not results:
-            return symbol, {'error': 'Symbol not found', 'symbol': symbol}
+            return symbol, {'error': 'Symbol not found'}
 
         r = results[0]
         meta = r.get('meta', {})
@@ -39,15 +41,12 @@ def fetch_symbol(symbol):
         change = round(price - prev_close, 6) if price and prev_close else 0
         change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
 
-        # 1W change (~5 trading days ago)
         week_ago = closes[-6] if len(closes) >= 6 else (closes[0] if closes else None)
         week_pct = round((price - week_ago) / week_ago * 100, 2) if price and week_ago else None
 
-        # 1M change (earliest close in range)
         month_ago = closes[0] if closes else None
         month_pct = round((price - month_ago) / month_ago * 100, 2) if price and month_ago else None
 
-        # Sparkline: last 20 closes normalised for the chart
         sparkline = [round(c, 4) for c in closes[-20:]]
 
         return symbol, {
@@ -69,50 +68,36 @@ def fetch_symbol(symbol):
             'timestamp': meta.get('regularMarketTime'),
         }
     except urllib.error.HTTPError as e:
-        return symbol, {'error': f'HTTP {e.code}', 'symbol': symbol}
+        return symbol, {'error': f'HTTP {e.code}'}
     except Exception as e:
-        return symbol, {'error': str(e), 'symbol': symbol}
+        return symbol, {'error': str(e)}
 
 
-class handler(BaseHTTPRequestHandler):
+@app.route('/api/prices', methods=['GET', 'OPTIONS'])
+@app.route('/', methods=['GET', 'OPTIONS'])
+def prices():
+    if request.method == 'OPTIONS':
+        resp = app.make_default_options_response()
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = '*'
+        return resp
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors()
-        self.end_headers()
+    raw = request.args.get('symbols', '')
+    symbols = [s.strip().upper() for s in raw.split(',') if s.strip()][:30]
 
-    def do_GET(self):
-        qs = self.path.split('?', 1)[1] if '?' in self.path else ''
-        params = urllib.parse.parse_qs(qs)
-        raw = params.get('symbols', [''])[0]
-        symbols = [s.strip().upper() for s in raw.split(',') if s.strip()][:30]
+    if not symbols:
+        resp = jsonify({'error': 'symbols param required'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 400
 
-        if not symbols:
-            self._send({'error': 'symbols param required'}, 400)
-            return
+    result = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_symbol, s): s for s in symbols}
+        for f in as_completed(futures):
+            sym, data = f.result()
+            result[sym] = data
 
-        results = {}
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = {ex.submit(fetch_symbol, s): s for s in symbols}
-            for f in as_completed(futures):
-                sym, data = f.result()
-                results[sym] = data
-
-        self._send(results)
-
-    def _cors(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', '*')
-
-    def _send(self, data, status=200):
-        body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self._cors()
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
+    resp = jsonify(result)
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
