@@ -830,7 +830,30 @@ function renderMarkets() {
   }
   empty.classList.add('hidden');
 
-  tbody.innerHTML = visible.map(sym => {
+  // Portfolio row
+  const portTicker = calcPortfolioTicker();
+  const portRow = portTicker ? (() => {
+    const t = portTicker;
+    const matchesFilter = !filter || 'portfolio'.includes(filter) || 'my portfolio'.includes(filter);
+    if (!matchesFilter) return '';
+    return `<tr style="border-left:3px solid ${PORTFOLIO_COLOR};background:#f59e0b08">
+      <td class="symbol-cell" style="color:${PORTFOLIO_COLOR}">💼 Portfolio</td>
+      <td class="name-cell" style="color:var(--muted)">${t.name}</td>
+      <td class="price-cell" style="color:${PORTFOLIO_COLOR}">${fmtCurrency(t.price, t.currency)} <span style="font-size:11px;color:var(--muted)">${t.currency}</span></td>
+      <td>${chgBadge(t.changePercent)}</td>
+      <td>${chgBadge(t.weekChangePercent)}</td>
+      <td>${chgBadge(t.monthChangePercent)}</td>
+      <td class="text-muted fz-12" colspan="2">
+        P&amp;L: <span class="${t.pnl >= 0 ? 'text-green' : 'text-red'} fw-6">${t.pnl >= 0 ? '+' : ''}${fmtCurrency(t.pnl, t.currency)}</span>
+        <span class="text-muted"> (${fmtPct(t.pnlPct)})</span>
+      </td>
+      <td style="text-align:center" class="sparkline">${sparklineSVG(t.sparkline)}</td>
+      <td></td>
+      <td></td>
+    </tr>`;
+  })() : '';
+
+  tbody.innerHTML = portRow + visible.map(sym => {
     const p  = state.prices[sym];
     const id = sym.replace(/[^a-zA-Z0-9]/g,'_');
 
@@ -1383,6 +1406,73 @@ async function fetchHistory() {
   renderSeriesToggleButtons();
 }
 
+// Build forward-filled portfolio value series for a given range.
+// Returns [{t, v}, ...] sorted by timestamp.
+function buildPortfolioValueSeries(range) {
+  if (!state.holdings.length) return [];
+  const holdingSyms = state.holdings.map(h => h.symbol);
+  const tsSet = new Set();
+  holdingSyms.forEach(sym => {
+    (historyCache[cacheKey(range, sym)] || []).forEach(p => tsSet.add(p.t));
+  });
+  const timestamps = [...tsSet].sort((a, b) => a - b);
+
+  return timestamps.map(t => {
+    let total = 0, anyPrice = false;
+    state.holdings.forEach(h => {
+      const hist = historyCache[cacheKey(range, h.symbol)];
+      if (!hist || !hist.length) return;
+      const map = {};
+      hist.forEach(p => { map[p.t] = p.c; });
+      // forward-fill
+      let last = null;
+      for (const ts of timestamps) {
+        if (map[ts] != null) last = map[ts];
+        if (ts === t) break;
+      }
+      if (last == null) return;
+      const nativeCcy = state.prices[h.symbol]?.currency || h.currency;
+      const baseVal = toBase(parseFloat(h.qty) * last, nativeCcy);
+      if (baseVal != null) { total += baseVal; anyPrice = true; }
+    });
+    return anyPrice ? { t, v: total } : null;
+  }).filter(Boolean);
+}
+
+// Compute portfolio "ticker" stats for the markets table row.
+function calcPortfolioTicker() {
+  const port = calcPortfolio();
+  if (!port.holdings.length) return null;
+
+  const range = state.chartRange || '3mo';
+  const series = buildPortfolioValueSeries(range);
+  const currentValue = port.totalValue;
+  const sparkline = series.slice(-20).map(p => p.v);
+
+  let weekChangePct = null, monthChangePct = null;
+  if (series.length >= 6) {
+    const ref = series[series.length - 6].v;
+    if (ref) weekChangePct = (currentValue - ref) / ref * 100;
+  }
+  if (series.length >= 20) {
+    const ref = series[series.length - 20].v;
+    if (ref) monthChangePct = (currentValue - ref) / ref * 100;
+  }
+
+  return {
+    isPortfolio: true,
+    price: currentValue,
+    currency: state.baseCurrency,
+    name: `${state.holdings.length} holding${state.holdings.length !== 1 ? 's' : ''}`,
+    changePercent: port.totalDayChangePct,
+    weekChangePercent: weekChangePct,
+    monthChangePercent: monthChangePct,
+    pnl: port.totalPnl,
+    pnlPct: port.totalPnlPct,
+    sparkline,
+  };
+}
+
 function buildPerfDatasets() {
   const range = state.chartRange;
   const enabled = enabledSeries || new Set();
@@ -1447,21 +1537,15 @@ function buildPerfDatasets() {
     });
   });
 
-  // Portfolio line
+  // Portfolio line — use shared helper, then align to chart timestamps
   if (enabled.has(PORTFOLIO_KEY) && state.holdings.length > 0) {
+    const portSeries = buildPortfolioValueSeries(range);
+    const portMap = {};
+    portSeries.forEach(p => { portMap[p.t] = p.v; });
+    let lastPort = null;
     const portValues = timestamps.map(t => {
-      let total = 0, anyPrice = false;
-      state.holdings.forEach(h => {
-        const series = priceSeries(h.symbol);
-        if (!series) return;
-        const idx = timestamps.indexOf(t);
-        const price = series[idx];
-        if (price == null) return;
-        const nativeCcy = state.prices[h.symbol]?.currency || h.currency;
-        const baseVal = toBase(parseFloat(h.qty) * price, nativeCcy);
-        if (baseVal != null) { total += baseVal; anyPrice = true; }
-      });
-      return anyPrice ? total : null;
+      if (portMap[t] != null) lastPort = portMap[t];
+      return lastPort;
     });
     datasets.push({
       label: 'My Portfolio',
