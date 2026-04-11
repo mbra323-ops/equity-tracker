@@ -1410,32 +1410,49 @@ async function fetchHistory() {
 // Returns [{t, v}, ...] sorted by timestamp.
 function buildPortfolioValueSeries(range) {
   if (!state.holdings.length) return [];
-  const holdingSyms = state.holdings.map(h => h.symbol);
+  const holdingSyms = [...new Set(state.holdings.map(h => h.symbol))];
+
+  // Pre-build price maps and find the latest first-timestamp across all holdings.
+  // This ensures we only start the series once ALL holdings have data, avoiding
+  // artificial early spikes caused by partial portfolio calculations.
+  const priceMaps = {};
+  let startTs = 0;
+  for (const sym of holdingSyms) {
+    const hist = historyCache[cacheKey(range, sym)];
+    if (!hist || !hist.length) return [];
+    startTs = Math.max(startTs, hist[0].t);
+    const map = {};
+    hist.forEach(p => { map[p.t] = p.c; });
+    priceMaps[sym] = map;
+  }
+
+  // Collect only timestamps from when ALL holdings have data.
   const tsSet = new Set();
   holdingSyms.forEach(sym => {
-    (historyCache[cacheKey(range, sym)] || []).forEach(p => tsSet.add(p.t));
+    Object.keys(priceMaps[sym]).forEach(t => {
+      if (Number(t) >= startTs) tsSet.add(Number(t));
+    });
   });
   const timestamps = [...tsSet].sort((a, b) => a - b);
 
+  // Forward-fill prices per symbol and compute portfolio value at each timestamp.
+  const lastPrices = {};
+  holdingSyms.forEach(sym => { lastPrices[sym] = null; });
+
   return timestamps.map(t => {
-    let total = 0, anyPrice = false;
-    state.holdings.forEach(h => {
-      const hist = historyCache[cacheKey(range, h.symbol)];
-      if (!hist || !hist.length) return;
-      const map = {};
-      hist.forEach(p => { map[p.t] = p.c; });
-      // forward-fill
-      let last = null;
-      for (const ts of timestamps) {
-        if (map[ts] != null) last = map[ts];
-        if (ts === t) break;
-      }
-      if (last == null) return;
-      const nativeCcy = state.prices[h.symbol]?.currency || h.currency;
-      const baseVal = toBase(parseFloat(h.qty) * last, nativeCcy);
-      if (baseVal != null) { total += baseVal; anyPrice = true; }
+    holdingSyms.forEach(sym => {
+      if (priceMaps[sym][t] != null) lastPrices[sym] = priceMaps[sym][t];
     });
-    return anyPrice ? { t, v: total } : null;
+    let total = 0;
+    for (const h of state.holdings) {
+      const price = lastPrices[h.symbol];
+      if (price == null) return null;
+      const nativeCcy = state.prices[h.symbol]?.currency || h.currency;
+      const baseVal = toBase(parseFloat(h.qty) * price, nativeCcy);
+      if (baseVal == null) return null;
+      total += baseVal;
+    }
+    return { t, v: total };
   }).filter(Boolean);
 }
 
